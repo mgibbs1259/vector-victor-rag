@@ -1,0 +1,4 @@
+*devcontainer.env
+.ruff_cache
+data
+./app/responses.db
