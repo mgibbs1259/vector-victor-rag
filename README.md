@@ -14,7 +14,7 @@ The notebooks outline the steps that I took to create a retrieval-augmented gene
 - [X] Extract text, images, and tables from the FAA JO 7110.65AA PDF
 - [] Obtain text descriptions for the images and tables from the FAA JO 7110.65AA PDF
 - [] Chunk text and generate text embeddings
-- [] Put embeddings into a graph database
+- [] Put embeddings into a vector database
 - [] Create code for retrieval and generation
 - [] Create an R shiny app to act as a user interface to the RAG implementation
 - [] Test RAG implementation and iterate appropriately
