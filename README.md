@@ -8,7 +8,7 @@
 
 # Steps
 The notebooks outline the steps that I took to create a retrieval-augmented generation (RAG) implementation.
-- [X] Assess if GPT-4o's knowledge of the FAA JO 7110.65AA
+- [X] Assess GPT-4o's knowledge of the FAA JO 7110.65
 - [X] Determine performance metrics to assess RAG implementation
 - [X] Create R shiny app for labeling data and work with SME to create labeled dataset
 - [X] Extract text, images, and tables from the FAA JO 7110.65AA PDF
