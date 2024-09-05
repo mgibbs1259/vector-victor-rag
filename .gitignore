@@ -1,4 +1,5 @@
-*devcontainer.env
-.ruff_cache
-data
 ./app/responses.db
+data
+*devcontainer.env
+*__pycache__
+.ruff_cache
