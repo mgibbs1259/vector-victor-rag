@@ -1,8 +1,10 @@
 # vector-victor-rag
 
+# Data
+[FAA JO 7110.65AA](https://www.faa.gov/documentLibrary/media/Order/7110.65AA_ATC_Basic_dtd_4-20-23_FINAL.pdf)
+
 # Initial Prototype
 [Google Colab Notebook](https://colab.research.google.com/drive/1aslnuPA4klCSXC2SAl3hpJA_W4NnjZ2N?usp=sharing)
-
 
 # R Shiny App
 
