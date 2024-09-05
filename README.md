@@ -16,7 +16,7 @@ The notebooks outline the steps that I took to create a retrieval-augmented gene
 - [] Chunk text and generate text embeddings
 - [] Put embeddings into a vector database
 - [] Create code for retrieval and generation
-- [] Create an R shiny app to act as a user interface to the RAG implementation
+- [] Create R shiny app to act as a user interface to the RAG implementation
 - [] Test RAG implementation and iterate appropriately
 
 # R Shiny App
