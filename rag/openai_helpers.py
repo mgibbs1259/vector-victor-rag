@@ -1,5 +1,7 @@
 from typing import List
 
+import tiktoken
+import numpy as np
 from jinja2 import Environment, FileSystemLoader
 
 
@@ -24,3 +26,34 @@ def generate_prompts_from_text_list(texts: List[str], template_path: str, prompt
         prompts.append(prompt)
 
     return prompts
+
+
+def get_num_tokens_from_string(string: str, encoding_name: str) -> int:
+    """
+    Returns the number of tokens in a text string.
+
+    Args:
+        string (str): The input text string to be tokenized.
+        encoding_name (str): The name of the encoding to be used for tokenization.
+
+    Returns:
+        int: The number of tokens in the given text string based on the specified encoding.
+    """
+    encoding = tiktoken.encoding_for_model(encoding_name)
+    num_tokens = len(encoding.encode(string))
+    return num_tokens
+
+
+def calculate_token_pricing(num_tokens: int, rate_per_million_tokens: float) -> float:
+    """
+    Calculates the cost based on the number of tokens and the rate in dollars per million tokens.
+
+    Args:
+        num_tokens (int): The number of tokens to be used in the calculation.
+        rate_per_million (float): The cost rate in dollars per million tokens.
+
+    Returns:
+        float: The total cost for the given number of tokens.
+    """
+    cost = (num_tokens / 1_000_000) * rate_per_million_tokens
+    return np.round(cost, 2)

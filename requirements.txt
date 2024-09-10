@@ -8,3 +8,4 @@ polars
 pyarrow
 pypdf
 ruff
+tiktoken
