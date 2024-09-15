@@ -1,5 +1,6 @@
 data
 *devcontainer.env
+notebooks/batch
 *__pycache__
 *responses.db
 .ruff_cache
