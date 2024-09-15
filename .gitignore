@@ -1,5 +1,5 @@
-./app/responses.db
 data
 *devcontainer.env
 *__pycache__
+*responses.db
 .ruff_cache
