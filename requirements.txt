@@ -6,6 +6,7 @@ pandas
 pdfplumber
 polars
 pyarrow
+pydantic
 pypdf
 ruff
 tiktoken

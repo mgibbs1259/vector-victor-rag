@@ -1,11 +1,17 @@
-from typing import List
+import json
+import os
+from typing import Any, Dict, Optional
 
-import tiktoken
 import numpy as np
+import tiktoken
 from jinja2 import Environment, FileSystemLoader
+from openai import OpenAI
+
+from .data_models.batch import BatchRequestMetadata, BatchRequestModel, BatchResponseModel
+from .data_models.chat_completions import ChatCompletionsBody, ChatCompletionsMessage, ChatCompletionsRequestModel
 
 
-def generate_prompts_from_text_list(texts: List[str], template_path: str, prompt_file_name: str) -> List[str]:
+def generate_prompts_from_text_list(texts: list[str], template_path: str, prompt_file_name: str) -> list[str]:
     """
     Generate a list of prompts by filling in text from a list of strings into a Jinja2 template.
 
@@ -57,3 +63,262 @@ def calculate_token_pricing(num_tokens: int, rate_per_million_tokens: float) -> 
     """
     cost = (num_tokens / 1_000_000) * rate_per_million_tokens
     return np.round(cost, 2)
+
+
+def create_file_path(base_path: str, filename: str, file_count: int) -> str:
+    """
+    Generate the full file path with a _num suffix.
+
+    Args:
+        base_path (str): The base directory or file path.
+        filename (str): Custom filename if base_path is a directory.
+        file_count (int): The count to append to the filename.
+
+    Returns:
+        str: The generated file path with a suffix appended.
+    """
+    if os.path.isdir(base_path):
+        return os.path.join(base_path, f"{filename}_{file_count}.jsonl")
+    name, ext = os.path.splitext(base_path)
+    return f"{name}_{file_count}{ext}"
+
+
+def write_request_chunks(
+    jsonl_file, prompts: list[str], current_size: int, max_requests: int, max_file_size_bytes: int
+) -> tuple[int, int]:
+    """
+    Write requests to the JSONL file until request or size limits are reached.
+
+    Args:
+        jsonl_file (File): The file object to write the requests to.
+        prompts (list[str]): The list of prompts to write.
+        current_size (int): The current size of the file in bytes.
+        max_requests (int): The maximum number of requests allowed per file.
+        max_file_size_bytes (int): The maximum file size allowed in bytes.
+
+    Returns:
+        tuple[int, int]: Number of requests written and updated file size.
+    """
+    requests_written = 0
+    for prompt in prompts:
+        if requests_written >= max_requests:
+            break
+
+        request = ChatCompletionsRequestModel(
+            body=ChatCompletionsBody(messages=[ChatCompletionsMessage(role="user", content=prompt)])
+        )
+        json_request = request.model_dump_json() + "\n"
+        json_request_size = len(json_request)
+
+        if current_size + json_request_size > max_file_size_bytes:
+            print(f"File size limit reached: {max_file_size_bytes / (1024 * 1024)} MB.")
+            break
+
+        jsonl_file.write(json_request)
+        current_size += json_request_size
+        requests_written += 1
+
+    return requests_written, current_size
+
+
+def write_requests_to_jsonl(
+    prompts: list[str],
+    base_output_path: str,
+    batch_request_file: str = "batch_requests",
+    max_requests: int = 50000,
+    max_file_size_bytes: int = 100 * 1024 * 1024,  # Default 100 MB
+) -> None:
+    """
+    Write OpenAI requests to multiple JSONL files, ensuring that request and size limits are respected.
+
+    Args:
+        prompts (list[str]): The list of user prompts.
+        base_output_path (str): Directory or file path for output JSONL files.
+        batch_request_file (str, optional): Custom batch requests filename for files if base_output_path is a directory.
+        max_requests (int, optional): Maximum number of requests per file. Defaults to 50,000.
+        max_file_size_bytes (int, optional): Maximum file size in bytes. Defaults to 100 MB.
+
+    Returns:
+        None
+    """
+    file_count = 1
+    total_written = 0
+
+    while prompts:
+        current_filename = create_file_path(base_output_path, batch_request_file, file_count)
+
+        try:
+            with open(current_filename, "w") as jsonl_file:
+                current_size = 0
+                prompts_written, current_size = write_request_chunks(
+                    jsonl_file, prompts, current_size, max_requests, max_file_size_bytes
+                )
+                total_written += prompts_written
+                prompts = prompts[prompts_written:]
+                print(f"Written {prompts_written} requests to {current_filename}.")
+
+            file_count += 1
+        except IOError as e:
+            print(f"Failed to write to {current_filename}: {e}")
+            break
+
+    print(f"Total requests written across all files: {total_written}")
+
+
+def upload_openai_batch_file(client: OpenAI, batch_request_file: str) -> str:
+    """
+    Uploads a file to OpenAI and returns the file ID.
+
+    Args:
+        client (OpenAI): An instance of the OpenAI client.
+        batch_request_file (str): Path to the input batch request JSONL file.
+
+    Returns:
+        str: The ID of the uploaded file.
+    """
+    with open(batch_request_file, "rb") as f:
+        batch_input_file = client.files.create(file=f, purpose="batch")
+    return batch_input_file.id
+
+
+def create_openai_batch(client: OpenAI, batch_request: BatchRequestModel) -> Dict[str, Any]:
+    """
+    Creates an OpenAI batch and returns the response.
+
+    Args:
+        client (OpenAI): An instance of the OpenAI client.
+        batch_request (BatchRequestModel): The batch request.
+
+    Returns:
+        Dict[str, Any]: The response from the OpenAI Batch API.
+    """
+    return client.batches.create(
+        input_file_id=batch_request.input_file_id,
+        endpoint=batch_request.endpoint,
+        completion_window=batch_request.completion_window,
+        metadata=batch_request.metadata.model_dump(),
+    )
+
+
+def save_openai_batch_response(batch_response: BatchResponseModel, batch_response_file: str) -> None:
+    """
+    Saves the batch response to a JSON file.
+
+    Args:
+        batch_response (BatchResponseModel): The batch response.
+        batch_response_file (str): Path to the output batch response file.
+
+    Returns:
+        None
+    """
+    with open(batch_response_file, "w") as f:
+        json.dump(batch_response.model_dump(), f, indent=2)
+    print(f"Response saved to {batch_response_file}")
+
+
+def create_openai_batch_process(
+    api_key: str, batch_request_file: str, batch_response_file: str, description: Optional[str]
+) -> None:
+    """
+    Uploads the OpenAI batch request file, initiates an OpenAI batch process,
+    and saves the OpenAI batch response to a specified file for future reference.
+
+    Args:
+        api_key (str): OpenAI API key.
+        batch_request_file (str): Path to the input batch request JSONL file.
+        batch_response_file (str): Path to the output batch response file.
+        description (Optional[str]): Description for the batch process.
+
+    Returns:
+        None
+    """
+    client = OpenAI(api_key=api_key)
+
+    try:
+        batch_input_file_id = upload_openai_batch_file(client, batch_request_file)
+
+        batch_request = BatchRequestModel(
+            input_file_id=batch_input_file_id, metadata=BatchRequestMetadata(description=description)
+        )
+
+        batch_response = create_openai_batch(client, batch_request)
+
+        save_openai_batch_response(batch_response, batch_response_file)
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
+def get_openai_batch_id_from_json(file_path: str) -> str:
+    """
+    Reads the JSON file and extracts the OpenAI batch ID.
+
+    Args:
+        file_path (str): Path to the JSON file.
+
+    Returns:
+        str: The OpenAI batch ID.
+    """
+    try:
+        with open(file_path, 'r') as json_file:
+            data = json.load(json_file)
+            return data['id']
+    except KeyError:
+        raise ValueError("The JSON file does not contain a 'batch_id' field.")
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The file {file_path} was not found.")
+    except json.JSONDecodeError:
+        raise ValueError(f"The file {file_path} is not a valid JSON file.")
+
+
+def handle_completed_openai_batch(client: OpenAI, batch_job: Any, output_file: str) -> None:
+    """
+    Handles a completed OpenAI batch by downloading and saving the output to a file.
+
+    Args:
+        client (OpenAI): An instance of the OpenAI client.
+        batch_job (Any): The OpenAI batch job object.
+        output_file (str): Path to the output file.
+
+    Returns:
+        None
+    """
+    output_file_id = batch_job.output_file_id
+
+    if output_file_id:
+        outputs = client.files.content(output_file_id).content
+
+        with open(output_file, "wb") as file:
+            file.write(outputs)
+        print(f"OpenAI batch job {batch_job.id} output saved to {output_file}")
+    else:
+        print(f"OpenAI batch job {batch_job.id} completed, but contains no output.")
+
+
+def check_openai_batch_status(api_key: str, batch_response_file: str, output_file: str) -> None:
+    """
+    Retrieves the OpenAI batch job status and prints it. If the batch job is completed,
+    it handles the output by writing it to a file.
+
+    Args:
+        api_key (str): OpenAI API key.
+        batch_response_file (str): Path to the batch response file.
+        output_file (str): Path to the output file.
+
+    Returns:
+        None
+    """
+    client = OpenAI(api_key=api_key)
+
+    try:
+        openai_batch_id = get_openai_batch_id_from_json(batch_response_file)
+        openai_batch_job = client.batches.retrieve(openai_batch_id)
+        status = openai_batch_job.status
+
+        if status == "completed":
+            handle_completed_openai_batch(client, openai_batch_job, output_file)
+        else:
+            print(f"OpenAI batch job {openai_batch_id} has status: {status}")
+
+    except Exception as e:
+        print(f"An error occurred while checking the OpenAI batch job status: {e}")
