@@ -3,6 +3,7 @@ import os
 from typing import Any, Dict, Optional
 
 import numpy as np
+import polars as pl
 import tiktoken
 from jinja2 import Environment, FileSystemLoader
 from openai import OpenAI
@@ -100,11 +101,12 @@ def write_request_chunks(
         tuple[int, int]: Number of requests written and updated file size.
     """
     requests_written = 0
-    for prompt in prompts:
+    for i, prompt in enumerate(prompts):
         if requests_written >= max_requests:
             break
 
         request = ChatCompletionsRequestModel(
+            custom_id=f"prompt_{i}",
             body=ChatCompletionsBody(messages=[ChatCompletionsMessage(role="user", content=prompt)])
         )
         json_request = request.model_dump_json() + "\n"
@@ -322,3 +324,31 @@ def check_openai_batch_status(api_key: str, batch_response_file: str, output_fil
 
     except Exception as e:
         print(f"An error occurred while checking the OpenAI batch job status: {e}")
+
+
+def read_batch_output_jsonl_to_polars(file_path: str) -> list[dict]:
+    """
+    Extracts the 'id', 'custom_id', and 'content' columns from a JSON lines file.
+
+    Args:
+        file_path (str): The path to the JSON lines (.jsonl) file.
+
+    Returns:
+        list[dict]: A list of dictionaries, each containing 'id', 'custom_id', and 'content'.
+    """
+    results = []
+
+    with open(file_path, 'r') as file:
+        for line in file:
+            try:
+                json_obj = json.loads(line.strip())
+                record = {
+                    "id": json_obj["id"],
+                    "custom_id": json_obj.get("custom_id", None),  # Use .get() to handle missing custom_id
+                    "content": json_obj["response"]["body"]["choices"][0]["message"]["content"]
+                }
+                results.append(record)
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"Error parsing line: {e}")
+    
+    return pl.DataFrame(results)

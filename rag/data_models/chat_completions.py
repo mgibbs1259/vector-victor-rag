@@ -1,6 +1,4 @@
-import uuid
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ChatCompletionsMessage(BaseModel):
@@ -17,7 +15,7 @@ class ChatCompletionsBody(BaseModel):
 
 
 class ChatCompletionsRequestModel(BaseModel):
-    custom_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    custom_id: str
     method: str = "POST"
     url: str = "/v1/chat/completions"
     body: ChatCompletionsBody
