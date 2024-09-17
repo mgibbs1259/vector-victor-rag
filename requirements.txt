@@ -1,6 +1,7 @@
 black
 black[jupyter]
 jinja2
+langchain-text-splitters
 openai
 pandas
 pdfplumber

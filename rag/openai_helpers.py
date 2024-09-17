@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 import polars as pl
@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from .data_models.batch import BatchRequestMetadata, BatchRequestModel, BatchResponseModel
 from .data_models.chat_completions import ChatCompletionsBody, ChatCompletionsMessage, ChatCompletionsRequestModel
+from .data_models.embeddings import EmbeddingsRequestModel, EmbeddingsBody
 
 
 def generate_prompts_from_text_list(texts: list[str], template_path: str, prompt_file_name: str) -> list[str]:
@@ -63,7 +64,7 @@ def calculate_token_pricing(num_tokens: int, rate_per_million_tokens: float) -> 
         float: The total cost for the given number of tokens.
     """
     cost = (num_tokens / 1_000_000) * rate_per_million_tokens
-    return np.round(cost, 2)
+    return np.round(cost, 4)
 
 
 def create_file_path(base_path: str, filename: str, file_count: int) -> str:
@@ -84,15 +85,51 @@ def create_file_path(base_path: str, filename: str, file_count: int) -> str:
     return f"{name}_{file_count}{ext}"
 
 
+def create_chat_completion_request(prompt: str, index: int) -> str:
+    """
+    Create a chat completion request for the OpenAI API.
+
+    Args:
+        prompt (str): The prompt to be sent to the API.
+        index (int): The index used to generate a custom ID for the request.
+
+    Returns:
+        str: The representation of the chat completion request.
+    """
+    request = ChatCompletionsRequestModel(
+        custom_id=f"prompt_{index}",
+        body=ChatCompletionsBody(messages=[ChatCompletionsMessage(role="user", content=prompt)])
+    )
+    return request.model_dump_json()
+
+
+def create_embedding_request(text: str, index: int) -> str:
+    """
+    Create an embedding request for the OpenAI API.
+
+    Args:
+        text (str): The text to be sent to the API.
+        index (int): The index used to generate a custom ID for the request.
+
+    Returns:
+        str: The representation of the embedding request.
+    """
+    request = EmbeddingsRequestModel(
+        custom_id=f"embedding_{index}",
+        body=EmbeddingsBody(input=text)
+    )
+    return request.model_dump_json()
+
+
 def write_request_chunks(
-    jsonl_file, prompts: list[str], current_size: int, max_requests: int, max_file_size_bytes: int
-) -> tuple[int, int]:
+    jsonl_file, requests: list[str], current_size: int, max_requests: int, max_file_size_bytes: int
+) -> Tuple[int, int]:
     """
     Write requests to the JSONL file until request or size limits are reached.
 
     Args:
         jsonl_file (File): The file object to write the requests to.
-        prompts (list[str]): The list of prompts to write.
+        requests (list[str]): The list of preformatted request strings to write.
         current_size (int): The current size of the file in bytes.
         max_requests (int): The maximum number of requests allowed per file.
         max_file_size_bytes (int): The maximum file size allowed in bytes.
@@ -101,15 +138,11 @@ def write_request_chunks(
         tuple[int, int]: Number of requests written and updated file size.
     """
     requests_written = 0
-    for i, prompt in enumerate(prompts):
+    for request in requests:
         if requests_written >= max_requests:
             break
 
-        request = ChatCompletionsRequestModel(
-            custom_id=f"prompt_{i}",
-            body=ChatCompletionsBody(messages=[ChatCompletionsMessage(role="user", content=prompt)])
-        )
-        json_request = request.model_dump_json() + "\n"
+        json_request = request + "\n"
         json_request_size = len(json_request)
 
         if current_size + json_request_size > max_file_size_bytes:
@@ -124,19 +157,22 @@ def write_request_chunks(
 
 
 def write_requests_to_jsonl(
-    prompts: list[str],
+    data: list,
     base_output_path: str,
-    batch_request_file: str = "batch_requests",
+    batch_request_file: str,
+    create_request: Callable[[str, int], str],
     max_requests: int = 50000,
     max_file_size_bytes: int = 100 * 1024 * 1024,  # Default 100 MB
 ) -> None:
     """
-    Write OpenAI requests to multiple JSONL files, ensuring that request and size limits are respected.
+    Write API requests (chat completions, embeddings, etc.) to multiple JSONL files,
+    ensuring that request and size limits are respected.
 
     Args:
-        prompts (list[str]): The list of user prompts.
+        data (list): The list of inputs (e.g., prompts or embedding data).
         base_output_path (str): Directory or file path for output JSONL files.
         batch_request_file (str, optional): Custom batch requests filename for files if base_output_path is a directory.
+        create_request (Callable): A function to create the request JSONL based on the input data.
         max_requests (int, optional): Maximum number of requests per file. Defaults to 50,000.
         max_file_size_bytes (int, optional): Maximum file size in bytes. Defaults to 100 MB.
 
@@ -145,19 +181,20 @@ def write_requests_to_jsonl(
     """
     file_count = 1
     total_written = 0
+    requests = [create_request(input_data, i) for i, input_data in enumerate(data)]
 
-    while prompts:
+    while requests:
         current_filename = create_file_path(base_output_path, batch_request_file, file_count)
 
         try:
             with open(current_filename, "w") as jsonl_file:
                 current_size = 0
-                prompts_written, current_size = write_request_chunks(
-                    jsonl_file, prompts, current_size, max_requests, max_file_size_bytes
+                requests_written, current_size = write_request_chunks(
+                    jsonl_file, requests, current_size, max_requests, max_file_size_bytes
                 )
-                total_written += prompts_written
-                prompts = prompts[prompts_written:]
-                print(f"Written {prompts_written} requests to {current_filename}.")
+                total_written += requests_written
+                requests = requests[requests_written:]
+                print(f"Written {requests_written} requests to {current_filename}.")
 
             file_count += 1
         except IOError as e:
@@ -219,16 +256,21 @@ def save_openai_batch_response(batch_response: BatchResponseModel, batch_respons
 
 
 def create_openai_batch_process(
-    api_key: str, batch_request_file: str, batch_response_file: str, description: Optional[str]
+    api_key: str, 
+    batch_request_file: str, 
+    batch_response_file: str, 
+    endpoint: str, 
+    description: Optional[str] = None
 ) -> None:
     """
-    Uploads the OpenAI batch request file, initiates an OpenAI batch process,
+    Uploads the OpenAI batch request file, initiates an OpenAI batch process to a specified endpoint,
     and saves the OpenAI batch response to a specified file for future reference.
 
     Args:
         api_key (str): OpenAI API key.
         batch_request_file (str): Path to the input batch request JSONL file.
         batch_response_file (str): Path to the output batch response file.
+        endpoint (str): The OpenAI API endpoint to send the batch request (e.g., "/v1/chat/completions" or "/v1/embeddings").
         description (Optional[str]): Description for the batch process.
 
     Returns:
@@ -237,14 +279,20 @@ def create_openai_batch_process(
     client = OpenAI(api_key=api_key)
 
     try:
+        # Upload the batch request file to OpenAI and get the file ID
         batch_input_file_id = upload_openai_batch_file(client, batch_request_file)
 
+        # Create a batch request model with the input file ID and endpoint
         batch_request = BatchRequestModel(
-            input_file_id=batch_input_file_id, metadata=BatchRequestMetadata(description=description)
+            input_file_id=batch_input_file_id, 
+            endpoint=endpoint,
+            metadata=BatchRequestMetadata(description=description)
         )
 
+        # Initiate the batch process and get the response
         batch_response = create_openai_batch(client, batch_request)
 
+        # Save the batch response to the specified file
         save_openai_batch_response(batch_response, batch_response_file)
 
     except Exception as e:
@@ -326,7 +374,7 @@ def check_openai_batch_status(api_key: str, batch_response_file: str, output_fil
         print(f"An error occurred while checking the OpenAI batch job status: {e}")
 
 
-def read_batch_output_jsonl_to_polars(file_path: str) -> list[dict]:
+def read_batch_chat_completions_output_jsonl_to_polars(file_path: str) -> list[dict]:
     """
     Extracts the 'id', 'custom_id', and 'content' columns from a JSON lines file.
 
@@ -346,6 +394,34 @@ def read_batch_output_jsonl_to_polars(file_path: str) -> list[dict]:
                     "id": json_obj["id"],
                     "custom_id": json_obj.get("custom_id", None),  # Use .get() to handle missing custom_id
                     "content": json_obj["response"]["body"]["choices"][0]["message"]["content"]
+                }
+                results.append(record)
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"Error parsing line: {e}")
+    
+    return pl.DataFrame(results)
+
+
+def read_batch_embeddings_output_jsonl_to_polars(file_path: str) -> pl.DataFrame:
+    """
+    Extracts the 'id', 'custom_id', and 'embedding' columns from a JSON lines file.
+
+    Args:
+        file_path (str): The path to the JSON lines (.jsonl) file.
+
+    Returns:
+        pl.DataFrame: A Polars DataFrame containing 'id', 'custom_id', and 'embedding' columns.
+    """
+    results = []
+
+    with open(file_path, 'r') as file:
+        for line in file:
+            try:
+                json_obj = json.loads(line.strip())
+                record = {
+                    "id": json_obj["id"],
+                    "custom_id": json_obj.get("custom_id", None),  # Handle missing custom_id gracefully
+                    "embedding": json_obj["response"]["body"]["data"][0]["embedding"]  # Extract the embedding
                 }
                 results.append(record)
             except (json.JSONDecodeError, KeyError) as e:

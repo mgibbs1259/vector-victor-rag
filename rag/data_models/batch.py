@@ -9,7 +9,7 @@ class BatchRequestMetadata(BaseModel):
 
 class BatchRequestModel(BaseModel):
     input_file_id: str
-    endpoint: str = "/v1/chat/completions"
+    endpoint: str
     completion_window: str = "24h"
     metadata: Optional[BatchRequestMetadata]
 
@@ -38,39 +38,3 @@ class BatchResponseModel(BaseModel):
     expired_at: Optional[int]
     request_counts: BatchResponseCounts
     metadata: Optional[Dict[str, Any]]
-
-
-class BatchOutputChoice(BaseModel):
-    index: int
-    message: Dict[str, Any]
-    logprobs: Optional[Any]
-    finish_reason: str
-
-
-class BatchOutputUsage(BaseModel):
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-
-
-class BatchOutputBody(BaseModel):
-    id: str
-    object: str
-    created: int
-    model: str
-    choices: list[BatchOutputChoice]
-    usage: BatchOutputUsage
-    system_fingerprint: str
-
-
-class BatchOutputResponse(BaseModel):
-    status_code: int
-    request_id: str
-    body: BatchOutputBody
-    error: Optional[Any]
-
-
-class BatchOutputModel(BaseModel):
-    id: str
-    custom_id: str
-    response: BatchOutputResponse
