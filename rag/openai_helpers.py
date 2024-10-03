@@ -10,7 +10,7 @@ from openai import OpenAI
 
 from .data_models.batch import BatchRequestMetadata, BatchRequestModel, BatchResponseModel
 from .data_models.chat_completions import ChatCompletionsBody, ChatCompletionsMessage, ChatCompletionsRequestModel
-from .data_models.embeddings import EmbeddingsRequestModel, EmbeddingsBody
+from .data_models.embeddings import EmbeddingsBody, EmbeddingsRequestModel
 
 
 def generate_prompts_from_text_list(texts: list[str], template_path: str, prompt_file_name: str) -> list[str]:
@@ -98,7 +98,7 @@ def create_chat_completion_request(prompt: str, index: int) -> str:
     """
     request = ChatCompletionsRequestModel(
         custom_id=f"prompt_{index}",
-        body=ChatCompletionsBody(messages=[ChatCompletionsMessage(role="user", content=prompt)])
+        body=ChatCompletionsBody(messages=[ChatCompletionsMessage(role="user", content=prompt)]),
     )
     return request.model_dump_json()
 
@@ -114,10 +114,7 @@ def create_embedding_request(text: str, index: int) -> str:
     Returns:
         str: The representation of the embedding request.
     """
-    request = EmbeddingsRequestModel(
-        custom_id=f"embedding_{index}",
-        body=EmbeddingsBody(input=text)
-    )
+    request = EmbeddingsRequestModel(custom_id=f"embedding_{index}", body=EmbeddingsBody(input=text))
     return request.model_dump_json()
 
 
@@ -256,11 +253,7 @@ def save_openai_batch_response(batch_response: BatchResponseModel, batch_respons
 
 
 def create_openai_batch_process(
-    api_key: str, 
-    batch_request_file: str, 
-    batch_response_file: str, 
-    endpoint: str, 
-    description: Optional[str] = None
+    api_key: str, batch_request_file: str, batch_response_file: str, endpoint: str, description: Optional[str] = None
 ) -> None:
     """
     Uploads the OpenAI batch request file, initiates an OpenAI batch process to a specified endpoint,
@@ -284,9 +277,7 @@ def create_openai_batch_process(
 
         # Create a batch request model with the input file ID and endpoint
         batch_request = BatchRequestModel(
-            input_file_id=batch_input_file_id, 
-            endpoint=endpoint,
-            metadata=BatchRequestMetadata(description=description)
+            input_file_id=batch_input_file_id, endpoint=endpoint, metadata=BatchRequestMetadata(description=description)
         )
 
         # Initiate the batch process and get the response
@@ -310,9 +301,9 @@ def get_openai_batch_id_from_json(file_path: str) -> str:
         str: The OpenAI batch ID.
     """
     try:
-        with open(file_path, 'r') as json_file:
+        with open(file_path, "r") as json_file:
             data = json.load(json_file)
-            return data['id']
+            return data["id"]
     except KeyError:
         raise ValueError("The JSON file does not contain a 'batch_id' field.")
     except FileNotFoundError:
@@ -386,19 +377,19 @@ def read_batch_chat_completions_output_jsonl_to_polars(file_path: str) -> list[d
     """
     results = []
 
-    with open(file_path, 'r') as file:
+    with open(file_path, "r") as file:
         for line in file:
             try:
                 json_obj = json.loads(line.strip())
                 record = {
                     "id": json_obj["id"],
                     "custom_id": json_obj.get("custom_id", None),  # Use .get() to handle missing custom_id
-                    "content": json_obj["response"]["body"]["choices"][0]["message"]["content"]
+                    "content": json_obj["response"]["body"]["choices"][0]["message"]["content"],
                 }
                 results.append(record)
             except (json.JSONDecodeError, KeyError) as e:
                 print(f"Error parsing line: {e}")
-    
+
     return pl.DataFrame(results)
 
 
@@ -414,17 +405,17 @@ def read_batch_embeddings_output_jsonl_to_polars(file_path: str) -> pl.DataFrame
     """
     results = []
 
-    with open(file_path, 'r') as file:
+    with open(file_path, "r") as file:
         for line in file:
             try:
                 json_obj = json.loads(line.strip())
                 record = {
                     "id": json_obj["id"],
                     "custom_id": json_obj.get("custom_id", None),  # Handle missing custom_id gracefully
-                    "embedding": json_obj["response"]["body"]["data"][0]["embedding"]  # Extract the embedding
+                    "embedding": json_obj["response"]["body"]["data"][0]["embedding"],  # Extract the embedding
                 }
                 results.append(record)
             except (json.JSONDecodeError, KeyError) as e:
                 print(f"Error parsing line: {e}")
-    
+
     return pl.DataFrame(results)
